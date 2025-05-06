@@ -1,0 +1,11 @@
+GoldenHour.jpg,512
+HighPeaks.png,1024
+ShorelineView.bmp,750
+UrbanTwilight.jpg,640
+MistyWoods.png,520
+AutumnPath.bmp,695
+CityLights.jpg,670
+RainyWindow.png,560
+FrozenLake.jpg,920
+SunlitHills.png,800
+HarborDawn.bmp,735

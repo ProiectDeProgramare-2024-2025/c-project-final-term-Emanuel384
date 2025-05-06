@@ -1,0 +1,484 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+
+#define BLUE "\x1b[34m"
+#define RED "\x1b[31m"
+#define RESET "\x1b[0m"
+
+#define LINE_BUF 256
+#define FIELD_BUF 100
+
+#define FILE_PHOTOS "photos.txt"
+#define FILE_ALBUMS "albums.txt"
+#define FILE_TEMP "temp.txt"
+
+typedef struct {
+    char filename[FIELD_BUF];
+    int filesize;
+} Photo;
+
+typedef struct {
+    char albumName[FIELD_BUF];
+    char photoList[LINE_BUF];
+} Album;
+
+void flushInput();
+void pauseAndClear();
+void clearTerminal();
+void loadDefaultPhotos();
+void ensureAlbumFileExists();
+void listPhotos();
+int fetchPhotoSize(const char *filename);
+void createNewAlbum();
+void showAlbums();
+void insertPhoto();
+void deletePhoto();
+void removeAlbum();
+void renameAlbum();
+void printMenu();
+void handleOption(int option);
+
+void flushInput() {
+    int ch;
+    while ((ch = getchar()) != '\n' && ch != EOF);
+}
+
+void clearTerminal() {
+#ifdef _WIN32
+    system("cls");
+#else
+    system("clear");
+#endif
+}
+
+void pauseAndClear() {
+    printf("\nPress Enter to continue...");
+    flushInput();
+    getchar();
+    clearTerminal();
+}
+
+void loadDefaultPhotos() {
+    FILE *fp = fopen(FILE_PHOTOS, "r");
+    if (!fp) {
+        fp = fopen(FILE_PHOTOS, "w");
+        if (!fp) {
+            perror("Unable to create photo file");
+            exit(EXIT_FAILURE);
+        }
+        fprintf(fp, "Sunset.jpg,512\n");
+        fprintf(fp, "Mountains.png,1024\n");
+        fprintf(fp, "Beach.bmp,750\n");
+        fprintf(fp, "Cityscape.jpg,640\n");
+        fprintf(fp, "Forest.png,860\n");
+        fclose(fp);
+        printf("Sample photos initialized.\n");
+    } else {
+        fclose(fp);
+    }
+}
+
+void ensureAlbumFileExists() {
+    FILE *fp = fopen(FILE_ALBUMS, "r");
+    if (!fp) {
+        fp = fopen(FILE_ALBUMS, "w");
+        if (!fp) {
+            perror("Unable to create album file");
+            exit(EXIT_FAILURE);
+        }
+        fclose(fp);
+    } else {
+        fclose(fp);
+    }
+}
+
+void listPhotos() {
+    FILE *fp = fopen(FILE_PHOTOS, "r");
+    if (!fp) {
+        perror("Error opening photo file");
+        return;
+    }
+
+    char line[LINE_BUF];
+    printf("\n%-20s %-10s\n", "Photo", "Size (KB)");
+    printf("-------------------------------------\n");
+
+    while (fgets(line, sizeof(line), fp)) {
+        char name[FIELD_BUF];
+        int size;
+        if (sscanf(line, "%[^,],%d", name, &size) == 2) {
+            printf(BLUE "%-20s" RESET " %-10d\n", name, size);
+        }
+    }
+
+    printf("-------------------------------------\n");
+    fclose(fp);
+}
+
+int fetchPhotoSize(const char *filename) {
+    FILE *fp = fopen(FILE_PHOTOS, "r");
+    if (!fp) return 0;
+
+    char line[LINE_BUF];
+    int size = 0;
+    char name[FIELD_BUF];
+    while (fgets(line, sizeof(line), fp)) {
+        if (sscanf(line, "%[^,],%d", name, &size) == 2) {
+            if (strcmp(name, filename) == 0) {
+                fclose(fp);
+                return size;
+            }
+        }
+    }
+    fclose(fp);
+    return 0;
+}
+
+void createNewAlbum() {
+    clearTerminal();
+    char name[FIELD_BUF];
+    printf("Album name: ");
+    scanf("%99s", name);
+    flushInput();
+
+    if (strlen(name) == 0) {
+        printf("Album name cannot be empty.\n");
+        pauseAndClear();
+        return;
+    }
+
+    FILE *fp = fopen(FILE_ALBUMS, "r");
+    char line[LINE_BUF];
+    while (fp && fgets(line, sizeof(line), fp)) {
+        char existing[FIELD_BUF];
+        sscanf(line, "%[^,]", existing);
+        if (strcmp(existing, name) == 0) {
+            printf("Album '%s' already exists.\n", name);
+            fclose(fp);
+            pauseAndClear();
+            return;
+        }
+    }
+    if (fp) fclose(fp);
+
+    fp = fopen(FILE_ALBUMS, "a");
+    if (!fp) {
+        perror("Unable to create album");
+        pauseAndClear();
+        return;
+    }
+    fprintf(fp, "%s,\n", name);
+    fclose(fp);
+    printf("✅ Album '%s' created.\n", name);
+    pauseAndClear();
+}
+
+void showAlbums() {
+    clearTerminal();
+    FILE *fp = fopen(FILE_ALBUMS, "r");
+    if (!fp) {
+        perror("Unable to read albums");
+        pauseAndClear();
+        return;
+    }
+
+    printf("\n%-20s %-30s %-10s\n", "Album", "Photos", "Total Size");
+    printf("-------------------------------------------------------------\n");
+
+    char line[LINE_BUF];
+    while (fgets(line, sizeof(line), fp)) {
+        char name[FIELD_BUF], photos[LINE_BUF] = "";
+        sscanf(line, "%[^,],%[^\n]", name, photos);
+
+        int total = 0;
+        char *token = strtok(photos, ";");
+        while (token) {
+            total += fetchPhotoSize(token);
+            token = strtok(NULL, ";");
+        }
+
+        printf(BLUE "%-20s" RESET " %-30s " RED "%-10d" RESET "\n", name, (strlen(photos) ? photos : "None"), total);
+    }
+
+    printf("-------------------------------------------------------------\n");
+    fclose(fp);
+    pauseAndClear();
+}
+
+void insertPhoto() {
+    clearTerminal();
+    char album[FIELD_BUF];
+    printf("Album name: ");
+    scanf("%99s", album);
+    flushInput();
+
+    FILE *src = fopen(FILE_ALBUMS, "r");
+    FILE *dest = fopen(FILE_TEMP, "w");
+    if (!src || !dest) {
+        perror("File error");
+        if (src) fclose(src);
+        if (dest) fclose(dest);
+        pauseAndClear();
+        return;
+    }
+
+    char line[LINE_BUF];
+    int found = 0;
+    while (fgets(line, sizeof(line), src)) {
+        char current[FIELD_BUF], list[LINE_BUF] = "";
+        sscanf(line, "%[^,],%[^\n]", current, list);
+
+        if (strcmp(current, album) == 0) {
+            found = 1;
+            listPhotos();
+            char photo[FIELD_BUF];
+            printf("Photo to add: ");
+            scanf("%99s", photo);
+            flushInput();
+
+            if (!fetchPhotoSize(photo)) {
+                printf("Photo not found.\n");
+                fprintf(dest, "%s", line);
+            } else {
+                if (strlen(list) > 0)
+                    fprintf(dest, "%s,%s;%s\n", current, list, photo);
+                else
+                    fprintf(dest, "%s,%s\n", current, photo);
+                printf("✅ Added '%s' to '%s'.\n", photo, current);
+            }
+        } else {
+            fprintf(dest, "%s", line);
+        }
+    }
+
+    fclose(src);
+    fclose(dest);
+
+    if (!found) {
+        printf("Album '%s' not found.\n", album);
+        remove(FILE_TEMP);
+    } else {
+        remove(FILE_ALBUMS);
+        rename(FILE_TEMP, FILE_ALBUMS);
+    }
+    pauseAndClear();
+}
+
+void deletePhoto() {
+    clearTerminal();
+    char album[FIELD_BUF];
+    printf("Album name: ");
+    scanf("%99s", album);
+    flushInput();
+
+    FILE *src = fopen(FILE_ALBUMS, "r");
+    FILE *dest = fopen(FILE_TEMP, "w");
+    if (!src || !dest) {
+        perror("File error");
+        if (src) fclose(src);
+        if (dest) fclose(dest);
+        pauseAndClear();
+        return;
+    }
+
+    int found = 0;
+    char line[LINE_BUF];
+    while (fgets(line, sizeof(line), src)) {
+        char current[FIELD_BUF], list[LINE_BUF] = "";
+        sscanf(line, "%[^,],%[^\n]", current, list);
+
+        if (strcmp(current, album) == 0) {
+            found = 1;
+            printf("Current photos: %s\n", strlen(list) > 0 ? list : "None");
+            char removeName[FIELD_BUF];
+            printf("Photo to remove: ");
+            scanf("%99s", removeName);
+            flushInput();
+
+            char updated[LINE_BUF] = "";
+            char *token = strtok(list, ";");
+            int first = 1;
+            while (token) {
+                if (strcmp(token, removeName) != 0) {
+                    if (!first) strcat(updated, ";");
+                    strcat(updated, token);
+                    first = 0;
+                }
+                token = strtok(NULL, ";");
+            }
+            fprintf(dest, "%s,%s\n", current, updated);
+            printf("✅ Removed '%s' from '%s'.\n", removeName, current);
+        } else {
+            fprintf(dest, "%s", line);
+        }
+    }
+
+    fclose(src);
+    fclose(dest);
+
+    if (!found) {
+        printf("Album '%s' not found.\n", album);
+        remove(FILE_TEMP);
+    } else {
+        remove(FILE_ALBUMS);
+        rename(FILE_TEMP, FILE_ALBUMS);
+    }
+    pauseAndClear();
+}
+
+void removeAlbum() {
+    clearTerminal();
+    char name[FIELD_BUF];
+    printf("Album to delete: ");
+    scanf("%99s", name);
+    flushInput();
+
+    FILE *src = fopen(FILE_ALBUMS, "r");
+    FILE *dest = fopen(FILE_TEMP, "w");
+    if (!src || !dest) {
+        perror("File error");
+        if (src) fclose(src);
+        if (dest) fclose(dest);
+        pauseAndClear();
+        return;
+    }
+
+    int removed = 0;
+    char line[LINE_BUF];
+    while (fgets(line, sizeof(line), src)) {
+        char current[FIELD_BUF];
+        sscanf(line, "%[^,]", current);
+        if (strcmp(current, name) != 0) {
+            fprintf(dest, "%s", line);
+        } else {
+            removed = 1;
+        }
+    }
+
+    fclose(src);
+    fclose(dest);
+
+    if (removed) {
+        remove(FILE_ALBUMS);
+        rename(FILE_TEMP, FILE_ALBUMS);
+        printf("✅ Album '%s' deleted.\n", name);
+    } else {
+        printf("Album '%s' not found.\n", name);
+        remove(FILE_TEMP);
+    }
+    pauseAndClear();
+}
+
+void renameAlbum() {
+    clearTerminal();
+    char currentName[FIELD_BUF];
+    printf("Current album name: ");
+    scanf("%99s", currentName);
+    flushInput();
+
+    FILE *src = fopen(FILE_ALBUMS, "r");
+    FILE *dest = fopen(FILE_TEMP, "w");
+    if (!src || !dest) {
+        perror("File error");
+        if (src) fclose(src);
+        if (dest) fclose(dest);
+        pauseAndClear();
+        return;
+    }
+
+    int updated = 0;
+    char line[LINE_BUF];
+    while (fgets(line, sizeof(line), src)) {
+        char name[FIELD_BUF], list[LINE_BUF] = "";
+        sscanf(line, "%[^,],%[^\n]", name, list);
+        if (strcmp(name, currentName) == 0) {
+            updated = 1;
+            char newName[FIELD_BUF];
+            printf("New album name: ");
+            scanf("%99s", newName);
+            flushInput();
+
+            if (strlen(newName) == 0) {
+                printf("Invalid name.\n");
+                fprintf(dest, "%s", line);
+            } else {
+                fprintf(dest, "%s,%s\n", newName, list);
+                printf("✅ Album renamed to '%s'.\n", newName);
+            }
+        } else {
+            fprintf(dest, "%s", line);
+        }
+    }
+
+    fclose(src);
+    fclose(dest);
+
+    if (updated) {
+        remove(FILE_ALBUMS);
+        rename(FILE_TEMP, FILE_ALBUMS);
+    } else {
+        printf("Album '%s' not found.\n", currentName);
+        remove(FILE_TEMP);
+    }
+    pauseAndClear();
+}
+
+void printMenu() {
+    printf("\n====== Album Manager ======\n");
+    printf("1 - Create Album\n");
+    printf("2 - View Albums\n");
+    printf("3 - Add Photo to Album\n");
+    printf("4 - Remove Photo from Album\n");
+    printf("5 - Delete Album\n");
+    printf("6 - Rename Album\n");
+    printf("7 - View Photos\n");
+    printf("0 - Exit\n");
+    printf("===========================\n");
+}
+
+void handleOption(int option) {
+    switch (option) {
+        case 1: createNewAlbum(); break;
+        case 2: showAlbums(); break;
+        case 3: insertPhoto(); break;
+        case 4: deletePhoto(); break;
+        case 5: removeAlbum(); break;
+        case 6: renameAlbum(); break;
+        case 7: {
+            clearTerminal();
+            listPhotos();
+            pauseAndClear();
+            break;
+        }
+        default: break;
+    }
+}
+
+int main() {
+    clearTerminal();
+    loadDefaultPhotos();
+    ensureAlbumFileExists();
+
+    printf("Album Manager is ready.\n");
+    pauseAndClear();
+
+    int choice;
+    do {
+        printMenu();
+        printf("Option (0-7): ");
+        scanf("%d", &choice);
+        flushInput();
+
+        if (choice < 0 || choice > 7) {
+            printf("Invalid option.\n");
+            pauseAndClear();
+            continue;
+        }
+        handleOption(choice);
+    } while (choice != 0);
+
+    printf("Exiting Album Manager. Goodbye!\n");
+    return 0;
+}
